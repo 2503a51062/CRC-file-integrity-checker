@@ -1,430 +1,730 @@
 import streamlit as st
+import os
+import tempfile
 import zlib
 
-# --------------------------------------------------
+
+# =========================================================
 # PAGE CONFIGURATION
-# --------------------------------------------------
+# =========================================================
 
 st.set_page_config(
-    page_title="CRC-Based File Integrity Checker",
+    page_title="CRC File Integrity Checker",
     page_icon="🔐",
     layout="wide"
 )
 
-# --------------------------------------------------
-# TITLE
-# --------------------------------------------------
 
-st.title("🔐 CRC-Based File Integrity Checker")
+# =========================================================
+# CRC CONFIGURATION
+# =========================================================
 
-st.write(
-    "Upload the original file and the current file to calculate "
-    "CRC-3, CRC-4, CRC-8 and CRC-32 values and verify file integrity."
+# CRC-3:
+# Width  = 3
+# Poly   = 0x3
+# Init   = 0x0
+#
+# CRC-4/ITU:
+# Width  = 4
+# Poly   = 0x3
+# Init   = 0x0
+#
+# CRC-8:
+# Width  = 8
+# Poly   = 0x07
+# Init   = 0x00
+#
+# CRC-32/IEEE:
+# Polynomial = 0xEDB88320 (reflected form)
+# Init       = 0xFFFFFFFF
+# XOROUT     = 0xFFFFFFFF
+
+
+# =========================================================
+# GENERATE FAST CRC TABLE
+# =========================================================
+
+def generate_crc_table(width, polynomial):
+    """
+    Generate a lookup table for CRC calculation.
+
+    This table is created only once when the application starts.
+    """
+
+    table_size = 1 << width
+    mask = table_size - 1
+
+    table = [
+        [0] * 256
+        for _ in range(table_size)
+    ]
+
+    for crc in range(table_size):
+
+        for byte in range(256):
+
+            value = crc
+
+            for bit in range(8):
+
+                input_bit = (
+                    byte >> (7 - bit)
+                ) & 1
+
+                top_bit = (
+                    value >> (width - 1)
+                ) & 1
+
+                value = (
+                    value << 1
+                ) & mask
+
+                if top_bit ^ input_bit:
+
+                    value ^= polynomial
+
+            table[crc][byte] = value
+
+    return table
+
+
+# =========================================================
+# CREATE TABLES
+# =========================================================
+
+CRC3_TABLE = generate_crc_table(
+    width=3,
+    polynomial=0x3
 )
 
-st.info(
-    "Supported files: TXT, CSV, PDF, JPG, JPEG and PNG"
+CRC4_TABLE = generate_crc_table(
+    width=4,
+    polynomial=0x3
 )
 
-# --------------------------------------------------
-# CRC GENERIC FUNCTION
-# --------------------------------------------------
-
-def crc_calculate(data, width, polynomial, init=0, xorout=0):
-    """
-    Generic non-reflected CRC calculation.
-    """
-
-    crc = init
-    topbit = 1 << (width - 1)
-    mask = (1 << width) - 1
-
-    for byte in data:
-        crc ^= byte << (width - 8)
-
-        for _ in range(8):
-            if crc & topbit:
-                crc = ((crc << 1) ^ polynomial) & mask
-            else:
-                crc = (crc << 1) & mask
-
-    return (crc ^ xorout) & mask
+CRC8_TABLE = generate_crc_table(
+    width=8,
+    polynomial=0x07
+)
 
 
-# --------------------------------------------------
-# CRC FUNCTIONS
-# --------------------------------------------------
+# =========================================================
+# FAST CRC CALCULATION
+# =========================================================
 
-def calculate_crc3(data):
-    """
-    CRC-3/GSM
-    Polynomial: x^3 + x + 1
-    Poly = 0x3
-    """
+def calculate_crc_values(
+    file_path,
+    progress_bar=None,
+    status_text=None
+):
 
-    return crc_calculate(
-        data,
-        width=3,
-        polynomial=0x3,
-        init=0x0,
-        xorout=0x0
-    )
+    # Initial CRC values
+    crc3 = 0x0
+    crc4 = 0x0
+    crc8 = 0x00
 
+    # Standard CRC-32 initial value
+    crc32 = 0xFFFFFFFF
 
-def calculate_crc4(data):
-    """
-    CRC-4/ITU
-    Polynomial: x^4 + x + 1
-    Poly = 0x3
-    """
+    # File size
+    file_size = os.path.getsize(file_path)
 
-    return crc_calculate(
-        data,
-        width=4,
-        polynomial=0x3,
-        init=0x0,
-        xorout=0x0
-    )
+    processed = 0
+
+    # 4 MB chunks
+    chunk_size = 4 * 1024 * 1024
 
 
-def calculate_crc8(data):
-    """
-    CRC-8/SMBus
-    Polynomial: x^8 + x^2 + x + 1
-    Poly = 0x07
-    """
+    # -----------------------------------------------------
+    # OPEN FILE
+    # -----------------------------------------------------
 
-    return crc_calculate(
-        data,
-        width=8,
-        polynomial=0x07,
-        init=0x00,
-        xorout=0x00
-    )
+    with open(file_path, "rb") as file:
+
+        while True:
+
+            chunk = file.read(chunk_size)
+
+            if not chunk:
+                break
 
 
-def calculate_crc32(data):
-    """
-    CRC-32/ISO-HDLC
-    """
+            # =================================================
+            # CRC-3
+            # =================================================
 
-    return zlib.crc32(data) & 0xffffffff
+            for byte in chunk:
+
+                crc3 = CRC3_TABLE[crc3][byte]
 
 
-# --------------------------------------------------
-# CALCULATE ALL CRCS
-# --------------------------------------------------
+            # =================================================
+            # CRC-4
+            # =================================================
 
-def calculate_all_crcs(file):
+            for byte in chunk:
 
-    data = file.getvalue()
+                crc4 = CRC4_TABLE[crc4][byte]
+
+
+            # =================================================
+            # CRC-8
+            # =================================================
+
+            for byte in chunk:
+
+                crc8 = CRC8_TABLE[crc8][byte]
+
+
+            # =================================================
+            # CRC-32
+            # =================================================
+
+            # zlib uses the optimized CRC-32 implementation
+            crc32 = zlib.crc32(
+                chunk,
+                crc32
+            )
+
+
+            # =================================================
+            # UPDATE PROGRESS
+            # =================================================
+
+            processed += len(chunk)
+
+            progress = (
+                processed / file_size
+                if file_size > 0
+                else 1
+            )
+
+            if progress_bar is not None:
+
+                progress_bar.progress(
+                    min(progress, 1.0)
+                )
+
+            if status_text is not None:
+
+                status_text.text(
+                    f"Processing: "
+                    f"{processed / (1024 * 1024):.2f} MB / "
+                    f"{file_size / (1024 * 1024):.2f} MB"
+                )
+
+
+    # Final CRC-32 XOR
+    crc32 = (
+        crc32 ^ 0xFFFFFFFF
+    ) & 0xFFFFFFFF
+
 
     return {
-        "CRC-3": calculate_crc3(data),
-        "CRC-4": calculate_crc4(data),
-        "CRC-8": calculate_crc8(data),
-        "CRC-32": calculate_crc32(data)
+        "CRC-3": crc3,
+        "CRC-4": crc4,
+        "CRC-8": crc8,
+        "CRC-32": crc32
     }
 
 
-# --------------------------------------------------
-# FILE UPLOAD SECTION
-# --------------------------------------------------
+# =========================================================
+# FILE SIZE FUNCTION
+# =========================================================
 
-st.header("📂 Upload Files")
+def get_file_size(file_path):
 
-col1, col2 = st.columns(2)
+    size = os.path.getsize(file_path)
 
-# ORIGINAL / INPUT FILE
-with col1:
+    if size < 1024:
 
-    st.subheader("📄 Original / Input File")
+        return f"{size} Bytes"
 
-    original_file = st.file_uploader(
-        "Choose the original file",
-        type=[
-            "txt",
-            "csv",
-            "pdf",
-            "jpg",
-            "jpeg",
-            "png"
-        ],
-        key="original_file"
-    )
+    elif size < 1024 * 1024:
 
+        return f"{size / 1024:.2f} KB"
 
-# CURRENT FILE
-with col2:
+    elif size < 1024 * 1024 * 1024:
 
-    st.subheader("📄 Current File")
-
-    current_file = st.file_uploader(
-        "Choose the current file",
-        type=[
-            "txt",
-            "csv",
-            "pdf",
-            "jpg",
-            "jpeg",
-            "png"
-        ],
-        key="current_file"
-    )
-
-
-# --------------------------------------------------
-# PROCESS FILES
-# --------------------------------------------------
-
-if original_file is not None and current_file is not None:
-
-    # Get CRC values
-    original_crcs = calculate_all_crcs(original_file)
-    current_crcs = calculate_all_crcs(current_file)
-
-    # --------------------------------------------------
-    # FILE INFORMATION
-    # --------------------------------------------------
-
-    st.divider()
-
-    st.header("📋 File Information")
-
-    info1, info2 = st.columns(2)
-
-    with info1:
-
-        st.subheader("Original / Input File")
-
-        st.write(
-            "**File Name:**",
-            original_file.name
-        )
-
-        st.write(
-            "**File Size:**",
-            f"{len(original_file.getvalue()):,} bytes"
-        )
-
-    with info2:
-
-        st.subheader("Current File")
-
-        st.write(
-            "**File Name:**",
-            current_file.name
-        )
-
-        st.write(
-            "**File Size:**",
-            f"{len(current_file.getvalue()):,} bytes"
-        )
-
-    # --------------------------------------------------
-    # CRC TABLE
-    # --------------------------------------------------
-
-    st.divider()
-
-    st.header("🔢 CRC Values")
-
-    st.write(
-        "The following CRC algorithms are calculated for both files:"
-    )
-
-    # Header
-    h1, h2, h3, h4 = st.columns(4)
-
-    with h1:
-        st.markdown("### CRC-3")
-
-    with h2:
-        st.markdown("### CRC-4")
-
-    with h3:
-        st.markdown("### CRC-8")
-
-    with h4:
-        st.markdown("### CRC-32")
-
-
-    # Original values
-    st.subheader("📄 Original / Input File")
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    with c1:
-        st.code(
-            f"{original_crcs['CRC-3']:01X}",
-            language="text"
-        )
-
-    with c2:
-        st.code(
-            f"{original_crcs['CRC-4']:01X}",
-            language="text"
-        )
-
-    with c3:
-        st.code(
-            f"{original_crcs['CRC-8']:02X}",
-            language="text"
-        )
-
-    with c4:
-        st.code(
-            f"{original_crcs['CRC-32']:08X}",
-            language="text"
-        )
-
-
-    # Current values
-    st.subheader("📄 Current File")
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    with c1:
-        st.code(
-            f"{current_crcs['CRC-3']:01X}",
-            language="text"
-        )
-
-    with c2:
-        st.code(
-            f"{current_crcs['CRC-4']:01X}",
-            language="text"
-        )
-
-    with c3:
-        st.code(
-            f"{current_crcs['CRC-8']:02X}",
-            language="text"
-        )
-
-    with c4:
-        st.code(
-            f"{current_crcs['CRC-32']:08X}",
-            language="text"
-        )
-
-
-    # --------------------------------------------------
-    # VERIFICATION
-    # --------------------------------------------------
-
-    st.divider()
-
-    st.header("🛡️ Integrity Verification")
-
-    # Individual comparisons
-    crc3_match = (
-        original_crcs["CRC-3"]
-        == current_crcs["CRC-3"]
-    )
-
-    crc4_match = (
-        original_crcs["CRC-4"]
-        == current_crcs["CRC-4"]
-    )
-
-    crc8_match = (
-        original_crcs["CRC-8"]
-        == current_crcs["CRC-8"]
-    )
-
-    crc32_match = (
-        original_crcs["CRC-32"]
-        == current_crcs["CRC-32"]
-    )
-
-
-    # --------------------------------------------------
-    # COMPARISON TABLE
-    # --------------------------------------------------
-
-    st.subheader("🔍 CRC Comparison")
-
-    comparison_data = {
-        "CRC Algorithm": [
-            "CRC-3",
-            "CRC-4",
-            "CRC-8",
-            "CRC-32"
-        ],
-
-        "Original": [
-            f"{original_crcs['CRC-3']:01X}",
-            f"{original_crcs['CRC-4']:01X}",
-            f"{original_crcs['CRC-8']:02X}",
-            f"{original_crcs['CRC-32']:08X}"
-        ],
-
-        "Current": [
-            f"{current_crcs['CRC-3']:01X}",
-            f"{current_crcs['CRC-4']:01X}",
-            f"{current_crcs['CRC-8']:02X}",
-            f"{current_crcs['CRC-32']:08X}"
-        ],
-
-        "Status": [
-            "MATCH" if crc3_match else "DIFFERENT",
-            "MATCH" if crc4_match else "DIFFERENT",
-            "MATCH" if crc8_match else "DIFFERENT",
-            "MATCH" if crc32_match else "DIFFERENT"
-        ]
-    }
-
-    st.table(comparison_data)
-
-
-    # --------------------------------------------------
-    # FINAL RESULT
-    # --------------------------------------------------
-
-    all_match = (
-        crc3_match
-        and crc4_match
-        and crc8_match
-        and crc32_match
-    )
-
-    if all_match:
-
-        st.success(
-            "✅ FILE INTEGRITY VERIFIED\n\n"
-            "All four CRC values match. "
-            "The current file has the same contents as the original file."
+        return (
+            f"{size / (1024 * 1024):.2f} MB"
         )
 
     else:
 
-        st.error(
-            "❌ FILE MODIFIED / CORRUPTED\n\n"
-            "One or more CRC values are different. "
-            "The current file does not match the original file."
+        return (
+            f"{size / (1024 * 1024 * 1024):.2f} GB"
         )
 
 
-# --------------------------------------------------
-# NO FILE MESSAGE
-# --------------------------------------------------
+# =========================================================
+# SAVE UPLOADED FILE
+# =========================================================
 
-else:
+def save_uploaded_file(uploaded_file):
 
-    st.warning(
-        "Please upload BOTH the Original / Input File "
-        "and the Current File to calculate CRC values."
+    temp = tempfile.NamedTemporaryFile(
+        delete=False
     )
 
+    try:
 
-# --------------------------------------------------
-# FOOTER
-# --------------------------------------------------
+        # Read in chunks
+        while True:
+
+            data = uploaded_file.read(
+                4 * 1024 * 1024
+            )
+
+            if not data:
+                break
+
+            temp.write(data)
+
+    finally:
+
+        temp.close()
+
+    return temp.name
+
+
+# =========================================================
+# FORMAT CRC
+# =========================================================
+
+def format_crc(algorithm, value):
+
+    if algorithm == "CRC-3":
+
+        return f"0x{value:01X}"
+
+    elif algorithm == "CRC-4":
+
+        return f"0x{value:01X}"
+
+    elif algorithm == "CRC-8":
+
+        return f"0x{value:02X}"
+
+    elif algorithm == "CRC-32":
+
+        return f"0x{value:08X}"
+
+    return str(value)
+
+
+# =========================================================
+# TITLE
+# =========================================================
+
+st.title(
+    "🔐 CRC File Integrity Checker"
+)
+
+st.write(
+    "Compare an original file and a received file "
+    "using CRC-3, CRC-4, CRC-8 and CRC-32."
+)
 
 st.divider()
 
-st.caption(
-    "CRC-Based File Integrity Checker | "
-    "CRC-3 • CRC-4 • CRC-8 • CRC-32"
+
+# =========================================================
+# FILE UPLOADERS
+# =========================================================
+
+col1, col2 = st.columns(2)
+
+
+with col1:
+
+    st.subheader(
+        "📁 Original File"
+    )
+
+    original_file = st.file_uploader(
+        "Upload the original file",
+        type=None,
+        key="original"
+    )
+
+
+with col2:
+
+    st.subheader(
+        "📁 Received File"
+    )
+
+    received_file = st.file_uploader(
+        "Upload the received file",
+        type=None,
+        key="received"
+    )
+
+
+# =========================================================
+# CHECK BUTTON
+# =========================================================
+
+if (
+    original_file is not None
+    and received_file is not None
+):
+
+    st.divider()
+
+    if st.button(
+        "🔍 Check File Integrity",
+        use_container_width=True
+    ):
+
+        original_path = None
+        received_path = None
+
+
+        try:
+
+            # =================================================
+            # SAVE FILES
+            # =================================================
+
+            with st.spinner(
+                "Preparing files..."
+            ):
+
+                original_path = (
+                    save_uploaded_file(
+                        original_file
+                    )
+                )
+
+                received_path = (
+                    save_uploaded_file(
+                        received_file
+                    )
+                )
+
+
+            # =================================================
+            # FILE INFORMATION
+            # =================================================
+
+            st.subheader(
+                "📊 File Information"
+            )
+
+            info_col1, info_col2 = st.columns(2)
+
+
+            with info_col1:
+
+                st.write(
+                    "### Original File"
+                )
+
+                st.write(
+                    f"**Name:** "
+                    f"{original_file.name}"
+                )
+
+                st.write(
+                    f"**Size:** "
+                    f"{get_file_size(original_path)}"
+                )
+
+
+            with info_col2:
+
+                st.write(
+                    "### Received File"
+                )
+
+                st.write(
+                    f"**Name:** "
+                    f"{received_file.name}"
+                )
+
+                st.write(
+                    f"**Size:** "
+                    f"{get_file_size(received_path)}"
+                )
+
+
+            # =================================================
+            # SIZE CHECK
+            # =================================================
+
+            original_size = os.path.getsize(
+                original_path
+            )
+
+            received_size = os.path.getsize(
+                received_path
+            )
+
+
+            if original_size != received_size:
+
+                st.warning(
+                    "⚠️ File sizes are different."
+                )
+
+                st.write(
+                    "The CRC values will still be calculated, "
+                    "but the files cannot be identical."
+                )
+
+
+            # =================================================
+            # ORIGINAL CRC CALCULATION
+            # =================================================
+
+            st.divider()
+
+            st.subheader(
+                "⚙️ Calculating Original File"
+            )
+
+            original_progress = st.progress(
+                0
+            )
+
+            original_status = st.empty()
+
+
+            original_crc = calculate_crc_values(
+                original_path,
+                original_progress,
+                original_status
+            )
+
+
+            original_progress.progress(1.0)
+
+            original_status.success(
+                "✅ Original file calculation completed."
+            )
+
+
+            # =================================================
+            # RECEIVED CRC CALCULATION
+            # =================================================
+
+            st.subheader(
+                "⚙️ Calculating Received File"
+            )
+
+            received_progress = st.progress(
+                0
+            )
+
+            received_status = st.empty()
+
+
+            received_crc = calculate_crc_values(
+                received_path,
+                received_progress,
+                received_status
+            )
+
+
+            received_progress.progress(1.0)
+
+            received_status.success(
+                "✅ Received file calculation completed."
+            )
+
+
+            # =================================================
+            # RESULTS
+            # =================================================
+
+            st.divider()
+
+            st.subheader(
+                "🔢 CRC Integrity Results"
+            )
+
+
+            for algorithm in [
+                "CRC-3",
+                "CRC-4",
+                "CRC-8",
+                "CRC-32"
+            ]:
+
+                original_value = (
+                    original_crc[algorithm]
+                )
+
+                received_value = (
+                    received_crc[algorithm]
+                )
+
+
+                original_display = format_crc(
+                    algorithm,
+                    original_value
+                )
+
+                received_display = format_crc(
+                    algorithm,
+                    received_value
+                )
+
+
+                st.write(
+                    f"### {algorithm}"
+                )
+
+
+                result_col1, result_col2, result_col3 = (
+                    st.columns(3)
+                )
+
+
+                with result_col1:
+
+                    st.write(
+                        f"**Original:** "
+                        f"`{original_display}`"
+                    )
+
+
+                with result_col2:
+
+                    st.write(
+                        f"**Received:** "
+                        f"`{received_display}`"
+                    )
+
+
+                with result_col3:
+
+                    if (
+                        original_value
+                        == received_value
+                    ):
+
+                        st.success(
+                            "✅ MATCH"
+                        )
+
+                    else:
+
+                        st.error(
+                            "❌ CORRUPTED"
+                        )
+
+
+            # =================================================
+            # FINAL RESULT
+            # =================================================
+
+            st.divider()
+
+            all_match = all(
+                original_crc[algorithm]
+                == received_crc[algorithm]
+                for algorithm in [
+                    "CRC-3",
+                    "CRC-4",
+                    "CRC-8",
+                    "CRC-32"
+                ]
+            )
+
+
+            if (
+                all_match
+                and original_size == received_size
+            ):
+
+                st.success(
+                    "✅ FILE INTEGRITY VERIFIED\n\n"
+                    "The original and received files "
+                    "have matching CRC values."
+                )
+
+                st.balloons()
+
+            else:
+
+                st.error(
+                    "❌ FILE CORRUPTION DETECTED\n\n"
+                    "The CRC values do not match."
+                )
+
+
+        except Exception as e:
+
+            st.error(
+                f"❌ Error: {str(e)}"
+            )
+
+
+        finally:
+
+            # =================================================
+            # DELETE TEMPORARY FILES
+            # =================================================
+
+            if original_path:
+
+                try:
+                    os.remove(
+                        original_path
+                    )
+                except:
+                    pass
+
+
+            if received_path:
+
+                try:
+                    os.remove(
+                        received_path
+                    )
+                except:
+                    pass
+
+
+# =========================================================
+# CRC INFORMATION
+# =========================================================
+
+st.divider()
+
+st.subheader(
+    "ℹ️ CRC Algorithms"
+)
+
+st.write("""
+**CRC-3**
+- Width: 3 bits
+- Polynomial: 0x3
+- Initial value: 0x0
+
+**CRC-4**
+- Width: 4 bits
+- Polynomial: 0x3
+- Initial value: 0x0
+
+**CRC-8**
+- Width: 8 bits
+- Polynomial: 0x07
+- Initial value: 0x00
+
+**CRC-32**
+- Standard CRC-32/IEEE
+- Polynomial: 0xEDB88320
+- Initial value: 0xFFFFFFFF
+- Final XOR: 0xFFFFFFFF
+""")
+
+st.info(
+    "⚡ Optimized lookup-table CRC calculation is used "
+    "for CRC-3, CRC-4 and CRC-8. CRC-32 uses Python's "
+    "optimized zlib implementation. Files are processed "
+    "in 4 MB chunks."
 )
