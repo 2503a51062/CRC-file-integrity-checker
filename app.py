@@ -1,531 +1,250 @@
 import streamlit as st
-import os
+import OS
 
-
-# ============================================================
-# CRC CALCULATION FUNCTION
-# ============================================================
-
-def calculate_crc(data_bits, polynomial):
-    """
-    Calculate CRC using modulo-2 division.
-    data_bits  : binary string
-    polynomial : generator polynomial in binary form
-    """
-
-    degree = len(polynomial) - 1
-
-    # Append zeros according to generator polynomial degree
-    working_data = list(data_bits + "0" * degree)
-
-    # Convert polynomial to list
-    poly = list(polynomial)
-
-    # Modulo-2 division using XOR
-    for i in range(len(data_bits)):
-
-        if working_data[i] == "1":
-
-            for j in range(len(poly)):
-
-                working_data[i + j] = str(
-                    int(working_data[i + j]) ^
-                    int(poly[j])
-                )
-
-    # CRC remainder
-    remainder = "".join(working_data[-degree:])
-
-    return remainder
-
-
-# ============================================================
-# TEXT TO BINARY
-# ============================================================
-
-def text_to_binary(text):
-    """
-    Convert text into binary using UTF-8 bytes.
-    """
-
-    byte_data = text.encode("utf-8")
-
-    binary_data = "".join(
-        format(byte, "08b")
-        for byte in byte_data
-    )
-
-    return binary_data
-
-
-# ============================================================
-# FILE TO BINARY
-# ============================================================
-
-def file_to_binary(uploaded_file):
-    """
-    Read uploaded file as bytes and convert to binary.
-    """
-
-    file_bytes = uploaded_file.getvalue()
-
-    binary_data = "".join(
-        format(byte, "08b")
-        for byte in file_bytes
-    )
-
-    return binary_data
-
-
-# ============================================================
-# VERIFY CODEWORD
-# ============================================================
-
-def verify_codeword(codeword, polynomial):
-    """
-    Receiver-side CRC verification.
-
-    If remainder is all zeros:
-        No error detected
-
-    Otherwise:
-        Error detected
-    """
-
-    working_data = list(codeword)
-    poly = list(polynomial)
-
-    degree = len(polynomial) - 1
-
-    for i in range(len(codeword) - degree):
-
-        if working_data[i] == "1":
-
-            for j in range(len(poly)):
-
-                working_data[i + j] = str(
-                    int(working_data[i + j]) ^
-                    int(poly[j])
-                )
-
-    remainder = "".join(working_data[-degree:])
-
-    return remainder
-
-
-# ============================================================
-# FLIP A BIT
-# ============================================================
-
-def flip_bit(binary_string, position):
-
-    bits = list(binary_string)
-
-    if 0 <= position < len(bits):
-
-        if bits[position] == "0":
-            bits[position] = "1"
-
-        else:
-            bits[position] = "0"
-
-    return "".join(bits)
-
-
-# ============================================================
+# --------------------------------------------------
 # PAGE CONFIGURATION
-# ============================================================
+# --------------------------------------------------
 
 st.set_page_config(
-    page_title="CRC-Based File Integrity Checker",
+    page_title="CRC-32 File Integrity Checker",
     page_icon="🔐",
     layout="wide"
 )
 
-
-# ============================================================
+# --------------------------------------------------
 # TITLE
-# ============================================================
+# --------------------------------------------------
 
-st.title("🔐 CRC-Based File Integrity Checker")
+st.title("🔐 CRC-32 Based File Integrity Checker")
 
 st.write(
-    "This application calculates CRC values and verifies "
-    "whether binary data, text, or files have been modified."
+    "Upload the original file and the current file to verify "
+    "whether the file contents have changed."
 )
 
-
-# ============================================================
-# SIDEBAR
-# ============================================================
-
-st.sidebar.header("CRC Configuration")
-
-input_type = st.sidebar.selectbox(
-    "Select Input Type",
-    [
-        "Binary Data",
-        "Text",
-        "File"
-    ]
+st.info(
+    "CRC-32 compares the contents of two files. "
+    "If their CRC-32 values are the same, the contents match."
 )
 
+# --------------------------------------------------
+# CRC-32 FUNCTION
+# --------------------------------------------------
 
-algorithm = st.sidebar.selectbox(
-    "Select CRC Algorithm",
-    [
-        "CRC-3",
-        "CRC-4",
-        "CRC-8"
-    ]
-)
+def calculate_crc32(uploaded_file):
+    """
+    Calculate CRC-32 value of an uploaded file.
+    """
+    file_data = uploaded_file.getvalue()
 
+    crc_value = zlib.crc32(file_data) & 0xFFFFFFFF
 
-# ============================================================
-# GENERATOR POLYNOMIALS
-# ============================================================
-
-polynomials = {
-
-    "CRC-3": "1011",
-
-    "CRC-4": "10011",
-
-    "CRC-8": "100000111"
-}
+    return f"{crc_value:08X}"
 
 
-polynomial = polynomials[algorithm]
+# --------------------------------------------------
+# FILE UPLOAD SECTION
+# --------------------------------------------------
 
+st.header("📂 Select Files")
 
-st.sidebar.info(
-    f"Generator Polynomial: {polynomial}"
-)
+col1, col2 = st.columns(2)
 
+# --------------------------------------------------
+# ORIGINAL / INPUT FILE
+# --------------------------------------------------
 
-# ============================================================
-# INPUT SECTION
-# ============================================================
+with col1:
 
-st.header("1. Input Data")
+    st.subheader("📌 Original / Input File")
 
-
-data_bits = ""
-file_name = ""
-
-
-# ------------------------------------------------------------
-# BINARY INPUT
-# ------------------------------------------------------------
-
-if input_type == "Binary Data":
-
-    binary_input = st.text_input(
-        "Enter Binary Data",
-        value="101101"
-    )
-
-    if binary_input:
-
-        if set(binary_input).issubset({"0", "1"}):
-
-            data_bits = binary_input
-
-            st.success(
-                "Valid binary input."
-            )
-
-        else:
-
-            st.error(
-                "Please enter only 0 and 1."
-            )
-
-
-# ------------------------------------------------------------
-# TEXT INPUT
-# ------------------------------------------------------------
-
-elif input_type == "Text":
-
-    text_input = st.text_area(
-        "Enter Text",
-        value="HELLO"
-    )
-
-    if text_input:
-
-        data_bits = text_to_binary(text_input)
-
-        st.write(
-            f"Text converted to {len(data_bits)} binary bits."
-        )
-
-        with st.expander("View Binary Representation"):
-
-            st.code(data_bits)
-
-
-# ------------------------------------------------------------
-# FILE INPUT
-# ------------------------------------------------------------
-
-elif input_type == "File":
-
-    uploaded_file = st.file_uploader(
-        "Upload TXT, CSV, PDF or Image File",
+    original_file = st.file_uploader(
+        "Upload the original file",
         type=[
             "txt",
             "csv",
             "pdf",
-            "png",
             "jpg",
-            "jpeg"
-        ]
+            "jpeg",
+            "png"
+        ],
+        key="original_file"
     )
 
-    if uploaded_file is not None:
+# --------------------------------------------------
+# CURRENT FILE
+# --------------------------------------------------
 
-        file_name = uploaded_file.name
+with col2:
 
-        data_bits = file_to_binary(uploaded_file)
+    st.subheader("📌 Current File")
 
-        st.success(
-            f"File '{file_name}' uploaded successfully."
-        )
-
-        st.write(
-            f"File size: {len(uploaded_file.getvalue())} bytes"
-        )
-
-        st.write(
-            f"Binary data size: {len(data_bits)} bits"
-        )
-
-
-# ============================================================
-# CRC CALCULATION
-# ============================================================
-
-st.header("2. CRC Calculation")
+    current_file = st.file_uploader(
+        "Upload the current file",
+        type=[
+            "txt",
+            "csv",
+            "pdf",
+            "jpg",
+            "jpeg",
+            "png"
+        ],
+        key="current_file"
+    )
 
 
-if data_bits:
+# --------------------------------------------------
+# CHECK WHETHER BOTH FILES ARE UPLOADED
+# --------------------------------------------------
 
-    if st.button(
-        "Calculate CRC",
-        type="primary"
-    ):
+if original_file is not None and current_file is not None:
 
-        crc_value = calculate_crc(
-            data_bits,
-            polynomial
-        )
+    st.divider()
 
-        codeword = data_bits + crc_value
+    st.header("🔍 File Information")
 
-        st.session_state["data_bits"] = data_bits
-        st.session_state["crc_value"] = crc_value
-        st.session_state["codeword"] = codeword
-        st.session_state["polynomial"] = polynomial
+    # --------------------------------------------------
+    # FILE INFORMATION
+    # --------------------------------------------------
 
-        st.success("CRC calculated successfully!")
-
-
-# ============================================================
-# DISPLAY CRC RESULT
-# ============================================================
-
-if "crc_value" in st.session_state:
-
-    st.subheader("CRC Result")
-
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
 
-        st.metric(
-            "CRC Value",
-            st.session_state["crc_value"]
+        st.subheader("Original / Input File")
+
+        st.write("**File Name:**", original_file.name)
+
+        original_size = len(original_file.getvalue())
+
+        st.write(
+            "**File Size:**",
+            f"{original_size:,} bytes"
         )
 
     with col2:
 
-        st.metric(
-            "CRC Length",
-            len(st.session_state["crc_value"])
+        st.subheader("Current File")
+
+        st.write("**File Name:**", current_file.name)
+
+        current_size = len(current_file.getvalue())
+
+        st.write(
+            "**File Size:**",
+            f"{current_size:,} bytes"
         )
 
-    with col3:
+    # --------------------------------------------------
+    # CALCULATE CRC-32
+    # --------------------------------------------------
 
-        st.metric(
-            "Algorithm",
-            algorithm
+    original_crc = calculate_crc32(original_file)
+
+    current_crc = calculate_crc32(current_file)
+
+    # --------------------------------------------------
+    # DISPLAY CRC VALUES
+    # --------------------------------------------------
+
+    st.divider()
+
+    st.header("🔢 CRC-32 Values")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+
+        st.subheader("Original / Input File")
+
+        st.code(
+            original_crc,
+            language="text"
         )
 
-    st.write("### Generated Codeword")
+    with col2:
 
-    st.code(
-        st.session_state["codeword"]
-    )
+        st.subheader("Current File")
 
-
-# ============================================================
-# VERIFICATION
-# ============================================================
-
-if "codeword" in st.session_state:
-
-    st.header("3. File/Data Integrity Verification")
-
-    st.write(
-        "The receiver divides the received codeword by "
-        "the same generator polynomial."
-    )
-
-    if st.button("Verify Original Data"):
-
-        received_codeword = st.session_state["codeword"]
-
-        verification_remainder = verify_codeword(
-            received_codeword,
-            st.session_state["polynomial"]
+        st.code(
+            current_crc,
+            language="text"
         )
 
-        if set(verification_remainder) == {"0"}:
+    # --------------------------------------------------
+    # COMPARE CRC VALUES
+    # --------------------------------------------------
 
-            st.success(
-                f"✓ NO ERROR DETECTED\n\n"
-                f"Remainder: {verification_remainder}"
-            )
+    st.divider()
 
-        else:
+    st.header("🛡️ Integrity Verification")
 
-            st.error(
-                f"✗ ERROR DETECTED\n\n"
-                f"Remainder: {verification_remainder}"
-            )
+    if original_crc == current_crc:
 
-
-# ============================================================
-# ERROR SIMULATION
-# ============================================================
-
-if "codeword" in st.session_state:
-
-    st.header("4. Error Simulation")
-
-    codeword = st.session_state["codeword"]
-
-    st.write(
-        f"Codeword length: {len(codeword)} bits"
-    )
-
-    bit_position = st.number_input(
-        "Select bit position to modify",
-        min_value=0,
-        max_value=len(codeword) - 1,
-        value=0,
-        step=1
-    )
-
-    if st.button("Simulate Bit Error"):
-
-        corrupted_codeword = flip_bit(
-            codeword,
-            bit_position
-        )
-
-        st.session_state["corrupted_codeword"] = (
-            corrupted_codeword
-        )
-
-        st.write("### Original Codeword")
-
-        st.code(codeword)
-
-        st.write("### Corrupted Codeword")
-
-        st.code(corrupted_codeword)
-
-        remainder = verify_codeword(
-            corrupted_codeword,
-            st.session_state["polynomial"]
+        st.success(
+            "✅ FILE INTEGRITY VERIFIED"
         )
 
         st.write(
-            f"Verification Remainder: `{remainder}`"
+            "The CRC-32 values are identical. "
+            "The current file contents match the original file contents."
         )
 
-        if set(remainder) == {"0"}:
+    else:
 
-            st.warning(
-                "No error detected."
-            )
+        st.error(
+            "❌ FILE MODIFIED OR CORRUPTED"
+        )
 
-        else:
+        st.write(
+            "The CRC-32 values are different. "
+            "The current file contents do not match the original file."
+        )
 
-            st.error(
-                "✗ ERROR DETECTED - Data has been modified!"
-            )
+    # --------------------------------------------------
+    # COMPARISON TABLE
+    # --------------------------------------------------
 
+    st.divider()
 
-# ============================================================
-# PROJECT INFORMATION
-# ============================================================
+    st.subheader("📊 Comparison Summary")
 
-st.header("5. How the System Works")
+    comparison_data = {
+        "Property": [
+            "File Name",
+            "File Size",
+            "CRC-32"
+        ],
 
-st.markdown(
-    """
-    **User Input**
-    
-    ↓
-    
-    **Dashboard**
-    
-    ↓
-    
-    **Python Input Processing**
-    
-    ↓
-    
-    **Convert Text/File to Binary**
-    
-    ↓
-    
-    **Append Zeros**
-    
-    ↓
-    
-    **Modulo-2 Division using XOR**
-    
-    ↓
-    
-    **CRC Remainder**
-    
-    ↓
-    
-    **Generate Codeword**
-    
-    ↓
-    
-    **Receiver Verification**
-    
-    ↓
-    
-    **No Error / Error Detected**
-    """
-)
+        "Original / Input File": [
+            original_file.name,
+            f"{original_size:,} bytes",
+            original_crc
+        ],
 
+        "Current File": [
+            current_file.name,
+            f"{current_size:,} bytes",
+            current_crc
+        ]
+    }
 
-# ============================================================
+    st.table(comparison_data)
+
+else:
+
+    st.warning(
+        "⬆️ Please upload both the Original/Input File "
+        "and the Current File to perform verification."
+    )
+
+# --------------------------------------------------
 # FOOTER
-# ============================================================
+# --------------------------------------------------
 
 st.divider()
 
 st.caption(
-    "CRC-Based File Integrity Checker | "
-    "Operating Systems & Computer Networks Project"
+    "CRC-32 Based File Integrity Checker | "
+    "Used to detect accidental changes in file contents"
 )
